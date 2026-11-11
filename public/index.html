@@ -413,6 +413,38 @@
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
   }
+
+  /* ---------------- stage 4 + 5 ---------------- */
+  .sel, .inp, .note-in {
+    font-family: inherit; font-size: 15px; color: var(--ink);
+    background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-height: 44px;
+  }
+  .inp { width: 100%; margin: 14px 0 12px; }
+  .note-in { width: 100%; margin-top: 8px; font-size: 13.5px; min-height: 38px; padding: 7px 10px; }
+  .row-card {
+    display: flex; align-items: center; gap: 12px; margin-top: 8px;
+    background: var(--cream-2); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px;
+  }
+  .row-card.top { background: linear-gradient(150deg, #f7e9c4, #f1dca0); border-color: rgba(201,162,39,.5); }
+  .row-card .grow { flex: 1; min-width: 0; }
+  .rk { font-size: 22px; width: 34px; text-align: center; font-weight: 700; color: var(--teal-800); }
+  .score { font-size: 22px; font-weight: 700; color: var(--teal-900); font-variant-numeric: tabular-nums; }
+  .mini { min-height: 40px !important; padding: 6px 14px !important; font-size: 13.5px !important; border-radius: 12px !important; }
+  .acts { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .mod { margin-top: 18px; font-size: 13.5px; font-weight: 700; color: var(--teal-800); display: flex; gap: 8px; }
+  .mod .count { margin-left: auto; font-weight: 600; color: var(--ink-soft); }
+  .concept { background: var(--cream-2); border: 1px solid var(--line); border-radius: 14px; padding: 11px 12px; margin-top: 8px; }
+  .concept.done { background: #eef8f1; border-color: rgba(31,122,77,.35); }
+  .c-ta { font-size: 14.5px; font-weight: 600; line-height: 1.4; }
+  .c-en { font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; }
+  .rbs { display: grid; grid-template-columns: repeat(6, 1fr) auto; gap: 6px; }
+  .rb {
+    appearance: none; cursor: pointer; font-family: inherit; font-size: 16px; font-weight: 700;
+    min-height: 44px; border-radius: 11px; border: 1px solid var(--line); background: #fff; color: var(--teal-800);
+  }
+  .rb.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .rb.note { font-size: 15px; padding: 0 10px; }
+  .legend { font-size: 12px; color: var(--ink-soft); margin: 4px 0 0; }
 </style>
 </head>
 <body>
@@ -423,14 +455,14 @@
         <h1 class="brand-title">Roleplay Coaster</h1>
         <p class="brand-sub">ரோல்பிளே கோஸ்டர் · ஜுவல்லரி விற்பனை பயிற்சி</p>
       </div>
-      <span class="step-badge" id="stepBadge">Stage 3</span>
+      <span class="step-badge" id="stepBadge"></span>
     </header>
 
     <main id="app" aria-live="polite"></main>
 
     <p class="footer-note">
       Roleplay Coaster · Google Sheets + Cloudflare Worker<br />
-      <span id="buildInfo">Stage 2 — shuffle &amp; session</span>
+      <span id="buildInfo">Shuffle · Cards · Ratings · Leaderboard</span>
     </p>
   </div>
 
@@ -486,7 +518,11 @@ function randomIndex(max) {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(state.managerToken && path.startsWith("/api/manager/") ? { Authorization: "Bearer " + state.managerToken } : {}),
+      ...(options.headers || {}),
+    },
   });
 
   let data = null;
@@ -499,6 +535,7 @@ async function api(path, options = {}) {
     error.en = detail.message_en || "HTTP " + response.status;
     error.hint = detail.hint || "";
     error.code = detail.code || "";
+    if (error.code === "MANAGER_AUTH" || error.code === "MANAGER_TOKEN_EXPIRED") saveToken("");
     throw error;
   }
   return data;
@@ -523,6 +560,17 @@ const state = {
   ticks: [],           // attribute IDs the customer has ticked
   dirty: false,        // ticks changed but not saved
   saving: false,
+
+  // stage 4+ — manager side (token kept in sessionStorage only)
+  managerToken: (() => { try { return sessionStorage.getItem("rc_t") || ""; } catch (e) { return ""; } })(),
+  managerView: "login",   // "login" | "sessions" | "rate" | "leaderboard" | "history"
+  managerError: null,
+  rateSession: null,      // session being rated
+  rateModules: [],        // modules + concepts for the screen
+  ratingDraft: {},        // conceptId -> {rating, note}
+  savingRatings: false,
+  sheet: null, busy: false, lb: null, hist: null, histRot: "", histEmp: "",
+  mgrList: null, mgrErr: null, rate: null, draft: {}, dirtyIds: new Set(), noteOpen: new Set(), closeRes: null,
 };
 
 const STATUS_LABELS = {
@@ -671,8 +719,8 @@ function homeView() {
     ${d.rotationComplete ? "" : remainingCard(r.remaining, total)}
 
     <nav class="quick">
-      <button class="btn btn-ghost" data-action="soon">🏆 Leaderboard</button>
-      <button class="btn btn-ghost" data-action="soon">🕘 History</button>
+      <button class="btn btn-ghost" data-action="nav-lb">🏆 Leaderboard</button>
+      <button class="btn btn-ghost" data-action="nav-hist">🕘 History</button>
     </nav>
 
     <button class="manager-link" data-action="manager">மேலாளர் உள்நுழைவு · Manager login</button>
@@ -857,14 +905,14 @@ function cardView() {
 function quickLinks() {
   return `
     <nav class="quick">
-      <button class="btn btn-ghost" data-action="soon">🏆 Leaderboard</button>
-      <button class="btn btn-ghost" data-action="soon">🕘 History</button>
+      <button class="btn btn-ghost" data-action="nav-lb">🏆 Leaderboard</button>
+      <button class="btn btn-ghost" data-action="nav-hist">🕘 History</button>
     </nav>`;
 }
 
 function confirmSheet() {
   return `
-    <div class="overlay" data-action="close-sheet">
+    <div class="overlay">
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
         <h3 id="sheetTitle">நீங்கள் வாடிக்கையாளரா?</h3>
         <p class="muted" style="margin:0">
@@ -886,16 +934,18 @@ function confirmSheet() {
 function render() {
   const app = $("#app");
   const badge = $("#stepBadge");
-  if (badge) badge.textContent = "Stage 3";
+  if (badge) badge.textContent = state.data ? "R" + state.data.rotation.number : "";
 
-  document.body.classList.toggle("has-savebar", state.view === "card" && !!state.card && !state.card.locked);
+  document.body.classList.toggle("has-savebar", (state.view === "card" && !!state.card && !state.card.locked) || (state.view === "rate" && state.managerToken && !!state.rate));
 
   if (state.loading) { app.innerHTML = loadingCard(); return; }
   if (state.error && !state.data) { app.innerHTML = errorCard(state.error); return; }
 
-  if (state.view === "card") app.innerHTML = cardView();
-  else if (state.view === "result") app.innerHTML = resultView();
-  else app.innerHTML = homeView();
+  const y = window.scrollY;
+  app.innerHTML = extraView() || (state.view === "card" ? cardView() : state.view === "result" ? resultView() : homeView());
+  if (state.sheet) app.insertAdjacentHTML("beforeend", sheetView());
+  window.scrollTo(0, state.view === lastKey ? y : 0);
+  lastKey = state.view;
 }
 
 /* ------------------------------ actions --------------------------------- */
@@ -1041,6 +1091,289 @@ async function saveTicks(thenHome) {
   }
 }
 
+/* ====================== STAGE 4 + 5: manager, leaderboard, history ====================== */
+
+let lastKey = "";
+const fmt = (n) => String(Math.round((Number(n) || 0) * 10) / 10);
+const head = (pill, en, back = "home") => `
+  <div class="hero-top"><span class="pill gold">${pill}</span>
+    <button class="btn btn-ghost mini" data-action="${back}">← முகப்பு</button></div>
+  <h2 class="hero-title" style="margin-top:12px">${en}</h2>`;
+const errBox = (e) => `<div class="notice bad" style="margin-top:12px"><span class="ta">${esc(e.ta || "")}</span>${esc(e.en || "")}${e.hint ? `<code>${esc(e.hint)}</code>` : ""}</div>`;
+const rotSelect = (list, cur, key, all) => `<select class="sel" data-sel="${key}">${all ? `<option value="">All rotations</option>` : ""}${list.map((r) => `<option value="${r.number}" ${String(r.number) === String(cur) ? "selected" : ""}>R${r.number} · ${esc(r.status)}</option>`).join("")}</select>`;
+const phaseLabel = (p) => ({ waiting_ticks: "⏳ Customer ticks", waiting_manager: "📝 Needs rating", complete: "✅ Complete", cancelled: "✖ Cancelled" }[p] || p);
+
+/* ---------- leaderboard (everyone) ---------- */
+async function openLb(rot) {
+  state.view = "lb"; state.lb = null; state.lbErr = null; render();
+  try { state.lb = await api("/api/leaderboard" + (rot ? "?rotation=" + rot : "")); } catch (e) { state.lbErr = e; }
+  render();
+}
+function lbView() {
+  const d = state.lb;
+  if (state.lbErr) return `<section class="card">${head("🏆", "Leaderboard")}${errBox(state.lbErr)}</section>`;
+  if (!d) return loadingCard();
+  const medals = ["🥇", "🥈", "🥉"];
+  const rows = d.rows.map((r) => `
+    <div class="row-card ${r.rank <= 3 ? "top" : ""}">
+      <span class="rk">${r.rank <= 3 ? medals[r.rank - 1] : r.rank}</span>
+      <div class="grow"><b>${esc(r.name)}</b>
+        <div class="muted">${r.rank <= 3 && d.prizes[r.rank - 1] ? "🎁 " + esc(d.prizes[r.rank - 1]) + " · " : ""}Discovery ${fmt(r.discoveryTotal)}/30 · Concepts ${fmt(r.conceptTotal)}/70</div></div>
+      <span class="score">${fmt(r.total)}</span>
+    </div>`).join("");
+  return `<section class="card">${head("🏆 R" + esc(d.rotation.number), "தரவரிசை · Leaderboard")}
+    <div class="meta-row" style="margin-top:12px">${rotSelect(d.rotations, d.rotation.number, "lb", false)}
+      <span class="meta">${d.sessions.complete} complete · ${d.sessions.open} open · ${d.sessions.cancelled} cancelled</span></div>
+    ${rows || `<p class="muted">இன்னும் முடிந்த அமர்வுகள் இல்லை · No completed sessions yet.</p>`}
+  </section>`;
+}
+
+/* ---------- history (everyone) ---------- */
+async function openHist(rot) {
+  state.view = "hist"; state.hist = null; state.histErr = null; state.histRot = rot || ""; render();
+  try { state.hist = await api("/api/history" + (rot ? "?rotation=" + rot : "")); } catch (e) { state.histErr = e; }
+  render();
+}
+function histView() {
+  const d = state.hist;
+  if (state.histErr) return `<section class="card">${head("🕘", "History")}${errBox(state.histErr)}</section>`;
+  if (!d) return loadingCard();
+  const names = Array.from(new Set(d.rows.map((r) => r.salespersonName))).sort();
+  const rows = d.rows.filter((r) => !state.histEmp || r.salespersonName === state.histEmp).map((r) => `
+    <div class="row-card">
+      <div class="grow"><b>${esc(r.salespersonName)}</b> → ${esc(r.customerName)}
+        <div class="muted">${esc(r.sessionId)} · R${esc(r.rotation)} · ${esc(r.date)} · ${phaseLabel(r.phase)}</div>
+        ${r.phase === "complete" ? `<div class="muted">Discovery ${fmt(r.discoveryScore)}/30 · Concepts ${fmt(r.conceptScore)}/70</div>` : ""}</div>
+      ${r.phase === "complete" ? `<span class="score">${fmt(r.finalScore)}</span>` : ""}
+    </div>`).join("");
+  return `<section class="card">${head("🕘", "வரலாறு · History")}
+    <div class="meta-row" style="margin-top:12px">
+      ${rotSelect(d.rotations, state.histRot, "hist", true)}
+      <select class="sel" data-sel="emp"><option value="">All employees</option>${names.map((n) => `<option ${n === state.histEmp ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+    ${rows || `<p class="muted">எதுவும் இல்லை · Nothing to show.</p>`}
+    <p class="muted" style="margin:12px 0 0">Latest 100 sessions.</p>
+  </section>`;
+}
+
+/* ---------- manager: login + session list ---------- */
+function saveToken(token) {
+  state.managerToken = token || "";
+  try { token ? sessionStorage.setItem("rc_t", token) : sessionStorage.removeItem("rc_t"); } catch (e) {}
+}
+async function mgrLogin() {
+  const box = $("#mpw");
+  if (!box || state.busy) return;
+  state.busy = true; state.mgrErr = null; render();
+  try {
+    const r = await api("/api/manager/login", { method: "POST", body: JSON.stringify({ password: box.value }) });
+    saveToken(r.token);
+    state.busy = false;
+    return void openMgr();
+  } catch (e) { state.mgrErr = e; }
+  state.busy = false; render();
+}
+async function openMgr() {
+  state.view = "mgr"; state.mgrList = null; render();
+  if (!state.managerToken || !state.data) return;
+  try { state.mgrList = await api("/api/history?rotation=" + state.data.rotation.number); }
+  catch (e) { state.mgrErr = e; }
+  render();
+}
+function mgrView() {
+  if (!state.managerToken) {
+    return `<section class="card">${head("🔐", "மேலாளர் உள்நுழைவு · Manager login")}
+      <input id="mpw" class="inp" type="password" placeholder="கடவுச்சொல் · Password" autocomplete="current-password" />
+      <button class="btn btn-gold btn-block" data-action="m-login" ${state.busy ? "disabled" : ""}>உள்நுழை · Log in</button>
+      ${state.mgrErr ? errBox(state.mgrErr) : ""}</section>`;
+  }
+  const r = state.data ? state.data.rotation : { number: "", remaining: [] };
+  const rows = state.mgrList ? state.mgrList.rows.filter((s) => s.rotation === r.number) : null;
+  const list = rows === null ? `<div class="skeleton" style="margin-top:14px"></div>` : (rows.map((s) => `
+    <div class="row-card" style="display:block">
+      <b>${esc(s.salespersonName)}</b> → ${esc(s.customerName)}
+      <div class="muted">${esc(s.sessionId)} · ${phaseLabel(s.phase)}${s.phase === "complete" ? " · <b>" + fmt(s.finalScore) + "/100</b>" : ""}</div>
+      ${s.phase === "cancelled" ? "" : `<div class="acts">
+        <button class="btn btn-gold mini" data-action="m-rate" data-id="${esc(s.sessionId)}" ${s.phase === "waiting_ticks" ? "disabled" : ""}>${s.phase === "complete" ? "பார் · View" : "மதிப்பிடு · Rate"}</button>
+        ${s.phase === "complete" ? "" : `<button class="btn btn-ghost mini" data-action="m-cancel" data-id="${esc(s.sessionId)}">ரத்து · Cancel</button>`}
+      </div>`}
+    </div>`).join("") || `<p class="muted">இந்தச் சுற்றில் அமர்வுகள் இல்லை · No sessions yet.</p>`);
+  return `<section class="card">${head("👤 R" + esc(r.number), "மேலாளர் · Manager")}
+    ${state.mgrErr ? errBox(state.mgrErr) : ""}${list}
+    <div class="acts" style="margin-top:18px">
+      <button class="btn btn-gold" data-action="m-close">🏁 சுற்றை மூடு · Close rotation</button>
+      <button class="btn btn-ghost" data-action="m-out">வெளியேறு · Log out</button></div>
+  </section>`;
+}
+
+/* ---------- manager: rate concepts ---------- */
+async function openRate(id) {
+  state.view = "rate"; state.rate = null; state.rateErr = null; state.draft = {}; state.dirtyIds = new Set(); state.noteOpen = new Set(); render();
+  try {
+    const d = await api("/api/manager/session/" + encodeURIComponent(id));
+    d.ratings.modules.forEach((m) => m.concepts.forEach((c) => {
+      if (c.applicable) state.draft[c.conceptId] = { rating: c.rating, note: c.note || "" };
+    }));
+    state.rate = d;
+  } catch (e) { state.rateErr = e; }
+  render();
+}
+function rateCounts() {
+  const ids = Object.keys(state.draft);
+  return { total: ids.length, rated: ids.filter((k) => state.draft[k].rating !== null).length };
+}
+function rateView() {
+  if (state.rateErr) return `<section class="card">${head("📝", "Rating", "rate-back")}${errBox(state.rateErr)}</section>`;
+  const d = state.rate;
+  if (!d) return loadingCard();
+  const s = d.session, n = rateCounts();
+  const mods = d.ratings.modules.map((m) => {
+    const cs = m.concepts.filter((c) => c.applicable);
+    if (!cs.length) return "";
+    const done = cs.filter((c) => state.draft[c.conceptId].rating !== null).length;
+    return `<div class="mod"><span>${esc(m.moduleNo)}. ${esc(m.tamil)}</span><span class="count">${done}/${cs.length}</span></div>` + cs.map((c) => {
+      const dr = state.draft[c.conceptId];
+      const btns = Array.from({ length: c.maxRating + 1 }, (_, v) => `<button class="rb ${dr.rating === v ? "on" : ""}" data-action="rate" data-c="${esc(c.conceptId)}" data-v="${v}">${v}</button>`).join("");
+      return `<div class="concept ${dr.rating !== null ? "done" : ""}">
+        <div class="c-ta">${esc(c.tamil)}</div><div class="c-en">${esc(c.english)}</div>
+        <div class="rbs" style="grid-template-columns:repeat(${c.maxRating + 1},1fr) auto">${btns}<button class="rb note" data-action="note-toggle" data-c="${esc(c.conceptId)}" aria-label="note">📝</button></div>
+        ${dr.note || state.noteOpen.has(c.conceptId) ? `<input class="note-in" data-note="${esc(c.conceptId)}" maxlength="300" placeholder="குறிப்பு · Note" value="${esc(dr.note)}" />` : ""}
+      </div>`;
+    }).join("");
+  }).join("");
+  const skipped = d.ratings.progress.totalConcepts - n.total;
+  return `<section class="card">${head(esc(s.sessionId), "மதிப்பீடு · Rate concepts", "rate-back")}
+    <p class="hero-line">${esc(s.salespersonName)} → ${esc(s.customerName)} · Discovery ${d.ticks.length}/12 found</p>
+    ${d.card ? `<div class="objection" style="margin-top:12px"><div class="obj-label">${esc(d.card.persona)} · ${esc(d.card.objectionType)}</div><p class="obj-says">${esc(d.card.objection)}</p></div>` : ""}
+    <p class="legend">0 = not covered · ${d.ratings.maxRating} = excellent · tap a selected number again to clear${skipped > 0 ? " · " + skipped + " concepts don't apply to this card" : ""}</p>
+    ${mods}</section>
+    <div class="savebar"><div class="savebar-inner">
+      <span class="savebar-count" id="rateCount" style="min-width:70px">${n.rated} / ${n.total}</span>
+      <button class="btn btn-gold" data-action="rate-save" ${state.saving || !state.dirtyIds.size ? "disabled" : ""}>சேமி · Save${state.dirtyIds.size ? " (" + state.dirtyIds.size + ")" : ""}</button>
+    </div></div>`;
+}
+async function saveRatings() {
+  if (state.saving || !state.dirtyIds.size) return;
+  state.saving = true; render();
+  const id = state.rate.session.sessionId;
+  try {
+    const ratings = Array.from(state.dirtyIds).map((c) => ({ conceptId: c, rating: state.draft[c].rating, note: state.draft[c].note }));
+    const r = await api("/api/manager/session/" + encodeURIComponent(id) + "/ratings", { method: "POST", body: JSON.stringify({ ratings }) });
+    state.dirtyIds = new Set();
+    let msg = "சேமிக்கப்பட்டது · Saved " + r.progress.rated + " / " + r.progress.applicable;
+    if (r.progress.allDone) {
+      try {
+        const h = await api("/api/history?rotation=" + state.rate.session.rotation);
+        const row = h.rows.find((x) => x.sessionId === id);
+        if (row) msg = "✅ Complete · " + fmt(row.finalScore) + " / 100";
+      } catch (e) {}
+    }
+    toast(msg);
+  } catch (e) { toast(e.ta + " · " + e.en); }
+  state.saving = false; render();
+}
+
+/* ---------- confirmations + closing a rotation ---------- */
+function sheetView() {
+  const s = state.sheet;
+  const left = state.data ? state.data.rotation.remaining.length : 0;
+  const t = {
+    cancel: ["இந்த அமர்வை ரத்து செய்யவா?", "Cancel session " + s.id + "? The salesperson can be shuffled again.", "ஆம், ரத்து செய் · Yes, cancel", "sh-cancel"],
+    close: ["சுற்றை மூடவா?", "Close this rotation? The top 3 and prizes are recorded and the next rotation starts." + (left ? " ⚠ " + left + " people have not performed yet." : ""), "சுற்றை மூடு · Close rotation", "sh-close"],
+    force: ["முடியாத அமர்வுகள் உள்ளன", (s.msg || "") + " Force-closing leaves them unfinished.", "கட்டாயமாக மூடு · Force close", "sh-force"],
+  }[s.kind];
+  return `<div class="overlay"><div class="sheet" role="dialog" aria-modal="true"><h3>${t[0]}</h3>
+    <p class="muted" style="margin:0">${esc(t[1])}</p>
+    <div class="sheet-actions"><button class="btn btn-gold btn-block" data-action="${t[3]}" ${state.busy ? "disabled" : ""}>${t[2]}</button>
+    <button class="btn btn-ghost btn-block" data-action="sh-no">வேண்டாம் · Back</button></div></div></div>`;
+}
+async function mgrCall(path, body) {
+  if (state.busy) return null;
+  state.busy = true;
+  try { return await api(path, { method: "POST", body: JSON.stringify(body || {}) }); }
+  catch (e) { return { error: e }; }
+  finally { state.busy = false; }
+}
+async function doCancel() {
+  const r = await mgrCall("/api/manager/session/" + encodeURIComponent(state.sheet.id) + "/cancel");
+  state.sheet = null;
+  if (r && r.error) toast(r.error.ta + " · " + r.error.en);
+  return void openMgr();
+}
+async function doClose(force) {
+  const r = await mgrCall("/api/manager/rotation/close", { force });
+  if (r && r.error) {
+    state.sheet = r.error.code === "SESSIONS_OPEN" ? { kind: "force", msg: r.error.en } : null;
+    if (!state.sheet) toast(r.error.ta + " · " + r.error.en);
+    return void render();
+  }
+  state.closeRes = r; state.sheet = null; state.view = "closed"; render();
+}
+function closedView() {
+  const c = state.closeRes.closed;
+  const w = [["🥇", c.first], ["🥈", c.second], ["🥉", c.third]].map(([m, n], i) => `<div class="row-card ${n ? "top" : ""}"><span class="rk">${m}</span><div class="grow"><b>${esc(n || "—")}</b>${state.closeRes.prizes[i] ? `<div class="muted">🎁 ${esc(state.closeRes.prizes[i])}</div>` : ""}</div></div>`).join("");
+  return `<section class="card">${head("🏁 R" + esc(c.number), "சுற்று மூடப்பட்டது · Rotation closed")}
+    ${w}<p class="muted" style="margin:14px 0">${state.closeRes.next ? "Next: rotation R" + esc(state.closeRes.next.number) + " is now active." : "No further rotation row is available in the sheet — add one in Rotations."}</p>
+    <button class="btn btn-gold btn-block" data-action="home">முகப்பு · Home</button></section>`;
+}
+
+function extraView() {
+  const v = state.view;
+  if (v === "lb") return lbView();
+  if (v === "hist") return histView();
+  if (v === "mgr") return mgrView();
+  if (v === "rate" && state.managerToken) return rateView();
+  if (v === "closed" && state.closeRes) return closedView();
+  return null;
+}
+
+function extra(action, t) {
+  const id = t.dataset.id;
+  if (action === "nav-lb") return openLb();
+  if (action === "nav-hist") return openHist();
+  if (action === "manager") return openMgr();
+  if (action === "m-login") return mgrLogin();
+  if (action === "m-out") { saveToken(""); state.view = "home"; return render(); }
+  if (action === "m-rate") return openRate(id);
+  if (action === "m-cancel") { state.sheet = { kind: "cancel", id }; return render(); }
+  if (action === "m-close") { state.sheet = { kind: "close" }; return render(); }
+  if (action === "sh-no") { state.sheet = null; return render(); }
+  if (action === "sh-cancel") return doCancel();
+  if (action === "sh-close") return doClose(false);
+  if (action === "sh-force") return doClose(true);
+  if (action === "rate") {
+    const c = t.dataset.c, v = Number(t.dataset.v), dr = state.draft[c];
+    if (!dr) return;
+    dr.rating = dr.rating === v ? null : v;
+    state.dirtyIds.add(c);
+    return render();
+  }
+  if (action === "note-toggle") { state.noteOpen.add(t.dataset.c); return render(); }
+  if (action === "rate-save") return saveRatings();
+  if (action === "rate-back") {
+    if (state.dirtyIds.size && !confirm("சேமிக்காத மதிப்பீடுகள் உள்ளன. வெளியேறவா? · Unsaved ratings will be lost. Leave?")) return;
+    return openMgr();
+  }
+}
+
+document.addEventListener("change", (e) => {
+  const key = e.target.dataset && e.target.dataset.sel;
+  if (!key) return;
+  if (key === "lb") openLb(e.target.value);
+  else if (key === "hist") openHist(e.target.value);
+  else if (key === "emp") { state.histEmp = e.target.value; render(); }
+});
+document.addEventListener("input", (e) => {
+  const c = e.target.dataset && e.target.dataset.note;
+  if (!c || !state.draft[c]) return;
+  state.draft[c].note = e.target.value;       // no re-render: keeps the cursor in place
+  state.dirtyIds.add(c);
+  const b = document.querySelector('[data-action="rate-save"]');
+  if (b) { b.disabled = false; b.textContent = "சேமி · Save (" + state.dirtyIds.size + ")"; }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.id === "mpw") mgrLogin();
+});
+
 /* One delegated click handler: survives every re-render. */
 document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
@@ -1084,12 +1417,7 @@ document.addEventListener("click", (event) => {
   if (action === "save-ticks") return void saveTicks(false);
   if (action === "save-done") return void saveTicks(true);
   if (action === "reload-card") return void openCard();
-  if (action === "soon") {
-    return void toast("இந்தப் பகுதி அடுத்த கட்டத்தில் வரும் · Coming in the next stage");
-  }
-  if (action === "manager") {
-    return void toast("மேலாளர் உள்நுழைவு படி 4 இல் வரும் · Manager login arrives in stage 4");
-  }
+  return void extra(action, target);
 });
 
 /* Clicking the dark backdrop closes the sheet, but clicking inside it does not. */
