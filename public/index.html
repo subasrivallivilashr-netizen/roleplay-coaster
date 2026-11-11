@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="ta">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0B3F39" />
+<title>Roleplay Coaster · ரோல்பிளே கோஸ்டர்</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* ======================================================================
+     DESIGN TOKENS — warm jewellery palette: deep teal + gold on cream.
+     ====================================================================== */
+  :root {
+    --teal-950: #04211f;
+    --teal-900: #062e2a;
+    --teal-800: #0b3f39;
+    --teal-700: #10504a;
+    --teal-600: #17655d;
+    --gold: #c9a227;
+    --gold-soft: #e7c977;
+    --gold-pale: #f6e7bd;
+    --cream: #fbf7ee;
+    --cream-2: #f4ecdd;
+    --ink: #14312d;
+    --ink-soft: #4b635e;
+    --line: rgba(20, 49, 45, 0.12);
+    --ok: #1f7a4d;
+    --warn: #a8631b;
+    --bad: #a5342c;
+    --radius-lg: 22px;
+    --radius-md: 16px;
+    --radius-sm: 11px;
+    --shadow-card: 0 18px 40px -24px rgba(4, 33, 31, 0.55);
+    --shadow-btn: 0 10px 24px -10px rgba(201, 162, 39, 0.75);
+    --font: "Noto Sans Tamil", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    font-family: var(--font);
+    color: var(--cream);
+    background:
+      radial-gradient(1100px 700px at 12% -10%, rgba(201, 162, 39, 0.16), transparent 60%),
+      radial-gradient(900px 600px at 100% 0%, rgba(23, 101, 93, 0.55), transparent 55%),
+      linear-gradient(168deg, var(--teal-950) 0%, var(--teal-900) 45%, var(--teal-800) 100%);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.55;
+    padding: 0 16px 48px;
+  }
+
+  /* A very light "roller-coaster track" texture. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.07;
+    background-image:
+      radial-gradient(circle at 20% 30%, #fff 0 1.5px, transparent 2px),
+      radial-gradient(circle at 70% 80%, #fff 0 1.5px, transparent 2px);
+    background-size: 160px 160px, 220px 220px;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  /* ---------------- header ---------------- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 22px 4px 18px;
+  }
+  .logo {
+    width: 46px; height: 46px;
+    border-radius: 14px;
+    display: grid; place-items: center;
+    background: linear-gradient(150deg, var(--gold-soft), var(--gold));
+    color: var(--teal-950);
+    font-size: 24px;
+    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.15), 0 8px 18px -10px rgba(0,0,0,0.6);
+    flex: none;
+  }
+  .brand-title {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    color: var(--cream);
+  }
+  .brand-sub {
+    margin: 0;
+    font-size: 12.5px;
+    color: rgba(251, 247, 238, 0.62);
+  }
+  .step-badge {
+    margin-left: auto;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--gold-soft);
+    border: 1px solid rgba(231, 201, 119, 0.35);
+    padding: 6px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  /* ---------------- cards ---------------- */
+  .card {
+    background: var(--cream);
+    color: var(--ink);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    box-shadow: var(--shadow-card);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+  }
+  .card + .card { margin-top: 16px; }
+
+  .card-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--teal-900);
+  }
+  .card-note {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+
+  /* ---------------- status list ---------------- */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 2px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .status-row:last-child { border-bottom: 0; }
+  .dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    flex: none;
+    background: var(--line);
+    box-shadow: 0 0 0 4px rgba(20, 49, 45, 0.05);
+  }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(31, 122, 77, 0.14); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 0 4px rgba(165, 52, 44, 0.14); }
+  .dot.wait { background: var(--warn); box-shadow: 0 0 0 4px rgba(168, 99, 27, 0.14); }
+
+  .status-label { font-weight: 600; font-size: 14.5px; }
+  .status-label small {
+    display: block;
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--ink-soft);
+    letter-spacing: 0.2px;
+  }
+  .status-value {
+    margin-left: auto;
+    text-align: right;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--teal-800);
+    font-variant-numeric: tabular-nums;
+  }
+  .status-value span {
+    display: block;
+    font-weight: 400;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+  }
+
+  /* ---------------- buttons ---------------- */
+  .btn {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 700;
+    min-height: 56px;
+    padding: 14px 22px;
+    border-radius: var(--radius-md);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    text-decoration: none;
+  }
+  .btn:active { transform: translateY(1px) scale(0.995); }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .btn-gold {
+    background: linear-gradient(160deg, #f0d491 0%, var(--gold) 55%, #a8841b 100%);
+    color: #2a2103;
+    box-shadow: var(--shadow-btn), inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .btn-gold:hover:not(:disabled) { filter: brightness(1.04); }
+
+  .btn-ghost {
+    background: rgba(20, 49, 45, 0.05);
+    color: var(--teal-900);
+    border: 1px solid var(--line);
+    box-shadow: none;
+  }
+
+  .btn-block { width: 100%; }
+
+  /* ---------------- chips ---------------- */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .chip {
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: var(--cream-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+  }
+  .chip b { font-weight: 600; }
+  .chip .eid {
+    font-size: 10.5px;
+    letter-spacing: 0.5px;
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+
+  /* ---------------- error / notice ---------------- */
+  .notice {
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    font-size: 14px;
+    border: 1px solid transparent;
+  }
+  .notice.bad {
+    background: #fdf0ee;
+    border-color: rgba(165, 52, 44, 0.25);
+    color: #6f1f19;
+  }
+  .notice .ta { font-weight: 700; display: block; margin-bottom: 2px; }
+  .notice code {
+    display: block;
+    margin-top: 8px;
+    font-size: 12px;
+    background: rgba(0,0,0,0.06);
+    padding: 8px 10px;
+    border-radius: 8px;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+
+  .muted { color: var(--ink-soft); font-size: 13px; }
+
+  .skeleton {
+    height: 18px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, rgba(20,49,45,0.08), rgba(20,49,45,0.16), rgba(20,49,45,0.08));
+    background-size: 200% 100%;
+    animation: shimmer 1.2s linear infinite;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  .footer-note {
+    text-align: center;
+    font-size: 12px;
+    color: rgba(251, 247, 238, 0.5);
+    margin-top: 20px;
+    line-height: 1.7;
+  }
+
+  /* ---------------- toast ---------------- */
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translate(-50%, 140%);
+    background: var(--teal-950);
+    color: var(--cream);
+    border: 1px solid rgba(231, 201, 119, 0.4);
+    padding: 13px 18px;
+    border-radius: 14px;
+    font-size: 13.5px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 20px 40px -18px rgba(0,0,0,0.7);
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+    opacity: 0;
+    visibility: hidden;
+    z-index: 50;
+  }
+  #toast.show { transform: translate(-50%, 0); opacity: 1; visibility: visible; }
+
+  @media (max-width: 420px) {
+    .card { padding: 18px; }
+    .step-badge { display: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="logo" aria-hidden="true">🎢</div>
+      <div>
+        <h1 class="brand-title">Roleplay Coaster</h1>
+        <p class="brand-sub">ரோல்பிளே கோஸ்டர் · ஜுவல்லரி விற்பனை பயிற்சி</p>
+      </div>
+      <span class="step-badge" id="stepBadge">Step 1</span>
+    </header>
+
+    <main id="app" aria-live="polite"></main>
+
+    <p class="footer-note">
+      Roleplay Coaster · Google Sheets + Cloudflare Worker<br />
+      <span id="buildInfo">Stage 1 — connection test</span>
+    </p>
+  </div>
+
+  <div id="toast" role="status"></div>
+
+<script type="module">
+/* ==========================================================================
+   ROLEPLAY COASTER — front-end
+   --------------------------------------------------------------------------
+   Plain JavaScript, no build step. This file is the whole website: markup,
+   styles (above) and behaviour (below). It only ever calls /api/... on the
+   same domain, so no secret can reach the browser.
+
+   STAGE 1 contains the connection test screen. The Shuffle, customer,
+   manager, leaderboard and history screens are added in the next stages.
+   ========================================================================== */
+
+/* ---------------------------- tiny utilities ---------------------------- */
+
+/** Escape text before putting it into HTML (prevents XSS). */
+function esc(value) {
+  return String(value === undefined || value === null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const $ = (selector, root = document) => root.querySelector(selector);
+
+let toastTimer = null;
+function toast(message) {
+  const el = $("#toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 4200);
+}
+
+/** Call the Worker. Throws an Error carrying Tamil/English text. */
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+
+  let data = null;
+  try { data = await response.json(); } catch (e) { data = null; }
+
+  if (!response.ok) {
+    const detail = (data && data.error) || {};
+    const error = new Error(detail.message_en || "HTTP " + response.status);
+    error.ta = detail.message_ta || "ஏதோ தவறு நடந்தது.";
+    error.en = detail.message_en || "HTTP " + response.status;
+    error.hint = detail.hint || "";
+    error.code = detail.code || "";
+    throw error;
+  }
+  return data;
+}
+
+/* ------------------------------- app state ------------------------------- */
+
+const state = {
+  loading: true,
+  health: null,
+  employees: [],
+  error: null,
+};
+
+/* ------------------------------ rendering -------------------------------- */
+
+function statusRow(labelTa, labelEn, value, sub, tone) {
+  return `
+    <div class="status-row">
+      <span class="dot ${tone}"></span>
+      <span class="status-label">${esc(labelTa)}<small>${esc(labelEn)}</small></span>
+      <span class="status-value">${esc(value)}${sub ? `<span>${esc(sub)}</span>` : ""}</span>
+    </div>`;
+}
+
+function errorCard(error) {
+  return `
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">இணைப்பு தோல்வி · Connection failed</h2>
+          <p class="card-note">Fix the item below, then press “Test again”.</p>
+        </div>
+      </div>
+      <div class="notice bad">
+        <span class="ta">${esc(error.ta || "")}</span>
+        ${esc(error.en || "")}
+        ${error.hint ? `<code>${esc(error.hint)}</code>` : ""}
+        ${error.code ? `<code>Error code: ${esc(error.code)}</code>` : ""}
+      </div>
+      <div style="margin-top:16px">
+        <button class="btn btn-gold btn-block" data-action="reload">மீண்டும் சோதி · Test again</button>
+      </div>
+    </section>`;
+}
+
+function loadingCard() {
+  return `
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Google Sheet உடன் இணைக்கிறோம்…</h2>
+          <p class="card-note">Connecting to your spreadsheet</p>
+        </div>
+      </div>
+      <div class="skeleton" style="width:70%;margin-bottom:12px"></div>
+      <div class="skeleton" style="width:90%;margin-bottom:12px"></div>
+      <div class="skeleton" style="width:45%"></div>
+    </section>`;
+}
+
+function healthCard(health) {
+  const c = health.counts;
+  return `
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">இணைப்பு சரி · Connection OK</h2>
+          <p class="card-note">${esc(health.message_en)}</p>
+        </div>
+      </div>
+
+      ${statusRow("Google உள்நுழைவு", "Service account login", "OK", "Signed JWT accepted", "ok")}
+      ${statusRow("ஸ்பிரெட்ஷீட்", "Spreadsheet access", "OK", "Sheet ID " + health.sheet.idPreview, "ok")}
+      ${statusRow("பணியாளர்கள்", "Employees", String(c.employees), c.activeEmployees + " active", "ok")}
+      ${statusRow("பண்புகள்", "Attributes", String(c.attributes), "discovery questions", "ok")}
+      ${statusRow("வாடிக்கையாளர் கார்டுகள்", "Customer cards", String(c.customerCards), "personas", "ok")}
+      ${statusRow("கருத்துகள்", "Concepts", String(c.concepts), "training concepts", "ok")}
+      ${statusRow(
+        "தற்போதைய சுற்று",
+        "Current rotation",
+        "R" + health.settings.currentRotation,
+        "weights " + health.settings.discoveryWeight + " / " + health.settings.conceptWeight,
+        "ok"
+      )}
+
+      <p class="muted" style="margin-top:14px">
+        Read in ${health.timings.milliseconds} ms · reference data cached for 5 minutes.
+      </p>
+
+      <div style="margin-top:16px">
+        <button class="btn btn-gold btn-block" data-action="reload">மீண்டும் சோதி · Test again</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">பணியாளர் பட்டியல் · Employees</h2>
+          <p class="card-note">Read live from the Employees tab (${state.employees.length} rows)</p>
+        </div>
+      </div>
+      <div class="chips">
+        ${state.employees
+          .map(
+            (e) => `<span class="chip"${e.active ? "" : ' style="opacity:.45"'}>
+              <b>${esc(e.name)}</b><span class="eid">${esc(e.id)}</span>
+            </span>`
+          )
+          .join("")}
+      </div>
+    </section>`;
+}
+
+function render() {
+  const app = $("#app");
+  $("#stepBadge").textContent = "Step 1";
+
+  if (state.loading) {
+    app.innerHTML = loadingCard();
+    return;
+  }
+  if (state.error) {
+    app.innerHTML = errorCard(state.error);
+    app.querySelector('[data-action="reload"]').addEventListener("click", () => load({ fresh: true }));
+    return;
+  }
+  app.innerHTML = healthCard(state.health);
+  app.querySelectorAll('[data-action="reload"]').forEach((btn) =>
+    btn.addEventListener("click", () => load({ fresh: true }))
+  );
+}
+
+/* ------------------------------- loading -------------------------------- */
+
+async function load(options = {}) {
+  state.loading = true;
+  state.error = null;
+  render();
+
+  try {
+    // Both requests are independent, so run them together.
+    // "fresh" also clears the Worker's 5-minute cache, so sheet edits show at once.
+    const healthPath = options.fresh ? "/api/health?fresh=1" : "/api/health";
+    const [health, employees] = await Promise.all([
+      api(healthPath),
+      api("/api/employees"),
+    ]);
+    state.health = health;
+    state.employees = employees.employees || [];
+  } catch (error) {
+    // The error card already explains what happened, so no toast here.
+    state.error = error;
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+render();
+load();
+</script>
+</body>
+</html>
