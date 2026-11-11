@@ -632,6 +632,40 @@ function parseRotations(rows) {
   return list;
 }
 
+/**
+ * Discovery_Marks has one row per session:
+ * A Session ID | B..M A01..A12 (Y or blank) | N Marked By | O Marked At
+ * Columns B..M follow the Attributes tab order, so the attribute list is passed
+ * in rather than assumed.
+ */
+function parseDiscoveryMarks(rows, attributes) {
+  const bySession = new Map();
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const sessionId = txt(row[0]);
+    if (!sessionId) continue;
+
+    const ticks = [];
+    attributes.slice(0, 12).forEach((attribute, column) => {
+      if (yes(row[1 + column])) ticks.push(attribute.id);
+    });
+
+    bySession.set(sessionId.toUpperCase(), {
+      sessionId,
+      ticks,
+      markedBy: txt(row[13]),
+      markedAt: txt(row[14]),
+      rowNumber: i + 1, // 1-based sheet row (row 1 is the header)
+    });
+  }
+  return bySession;
+}
+
+function findSessionById(sessions, sessionId) {
+  const wanted = txt(sessionId).toUpperCase();
+  return sessions.find((s) => s.sessionId.toUpperCase() === wanted) || null;
+}
+
 /* ==========================================================================
    5. CACHING (keeps us under the Google quota)
    ========================================================================== */
@@ -1085,6 +1119,192 @@ async function handleShuffle() {
   });
 }
 
+/* --------------------------------------------------------------------------
+   STAGE 3 — the customer's persona card and the discovery ticks
+   -------------------------------------------------------------------------- */
+
+/**
+ * GET /api/session/:id/card
+ * The secret persona card for one session: the 12 attribute values, the
+ * objection and the behaviour tip — plus any ticks already saved.
+ *
+ * There is no customer login (by design), so the screen is honour-system
+ * protected: the front end only asks for this after "I am the customer".
+ */
+async function handleCard(request, url, match) {
+  assertConfig();
+
+  const sessionId = decodeURIComponent(match[1] || "").trim();
+  if (!sessionId) {
+    throw new ApiError(
+      400,
+      "SESSION_ID_MISSING",
+      "அமர்வு எண் இல்லை.",
+      "The session ID is missing from the address."
+    );
+  }
+
+  const [ref, scheduleRows] = await Promise.all([
+    getReferenceData(),
+    readRange(`${SHEET.schedule}!A:J`),
+  ]);
+
+  const sessions = await getSessions(scheduleRows);
+  const session = findSessionById(sessions, sessionId);
+
+  if (!session) {
+    throw new ApiError(
+      404,
+      "SESSION_NOT_FOUND",
+      "இந்த அமர்வு கிடைக்கவில்லை.",
+      "No session " + sessionId + " in the Schedule tab."
+    );
+  }
+
+  const card = ref.cards.find((c) => c.id.toUpperCase() === txt(session.cardId).toUpperCase());
+  if (!card) {
+    throw new ApiError(
+      409,
+      "CARD_MISSING",
+      "இந்த அமர்வின் கார்டு Customer_Cards இல் இல்லை.",
+      "Session " + session.sessionId + " points at card " + session.cardId + ", which is not in Customer_Cards.",
+      "Check column H of the Schedule row, or add the missing card."
+    );
+  }
+
+  const marksRows = await readRange(`${SHEET.discovery}!A:O`);
+  const marks = parseDiscoveryMarks(marksRows, ref.attributes).get(session.sessionId.toUpperCase()) || null;
+
+  // The ticks are frozen once the manager has finished rating the session.
+  const locked = session.complete === true;
+
+  return json({
+    session: publicSession(session),
+    card: {
+      id: card.id,
+      persona: card.persona,
+      objectionType: card.objectionType,
+      objection: card.objection,
+      behaviourTip: card.behaviourTip,
+      attributes: ref.attributes.slice(0, 12).map((attribute, index) => ({
+        id: attribute.id,
+        tamil: attribute.tamil,
+        english: attribute.english,
+        value: card.values[index] || "",
+      })),
+    },
+    ticks: marks ? marks.ticks : [],
+    markedBy: marks ? marks.markedBy : "",
+    markedAt: marks ? marks.markedAt : "",
+    locked,
+    canEdit: !locked,
+  });
+}
+
+/**
+ * POST /api/session/:id/discovery
+ * Body: { "ticks": ["A01", "A04", ...] }
+ * Writes the 12 tick columns (Y / blank) plus "Marked By" and "Marked At".
+ * One append for a new session, one range update if the row already exists.
+ */
+async function handleDiscovery(request, url, match) {
+  assertConfig();
+
+  const sessionId = decodeURIComponent(match[1] || "").trim();
+  const body = await readJsonBody(request);
+
+  if (Object.prototype.hasOwnProperty.call(body, "ticks") && !Array.isArray(body.ticks)) {
+    throw new ApiError(
+      400,
+      "INVALID_TICKS",
+      "டிக் பட்டியல் தவறான வடிவத்தில் உள்ளது.",
+      "The ticks value must be a list of attribute IDs, e.g. [\"A01\",\"A04\"].",
+      "Reload the page and tick again."
+    );
+  }
+  const requested = Array.isArray(body.ticks) ? body.ticks : [];
+
+  const [ref, scheduleRows] = await Promise.all([
+    getReferenceData(),
+    readRange(`${SHEET.schedule}!A:J`),
+  ]);
+
+  const sessions = await getSessions(scheduleRows);
+  const session = findSessionById(sessions, sessionId);
+
+  if (!session) {
+    throw new ApiError(
+      404,
+      "SESSION_NOT_FOUND",
+      "இந்த அமர்வு கிடைக்கவில்லை.",
+      "No session " + sessionId + " in the Schedule tab."
+    );
+  }
+
+  if (session.complete) {
+    throw new ApiError(
+      409,
+      "TICKS_LOCKED",
+      "மேலாளர் மதிப்பீடு முடிந்துவிட்டது. இனி டிக் மாற்ற முடியாது.",
+      "The manager has finished rating session " + session.sessionId + ", so its ticks are locked.",
+      "Ask the manager to unlock it (later stage)."
+    );
+  }
+
+  const known = ref.attributes.slice(0, 12);
+  const knownIds = new Set(known.map((attribute) => attribute.id.toUpperCase()));
+
+  const cleaned = [];
+  const unknown = [];
+  for (const raw of requested) {
+    const id = txt(raw).toUpperCase();
+    if (!id) continue;
+    if (!knownIds.has(id)) unknown.push(raw);
+    else if (!cleaned.includes(id)) cleaned.push(id);
+  }
+
+  if (unknown.length) {
+    throw new ApiError(
+      400,
+      "INVALID_ATTRIBUTE",
+      "தெரியாத பண்பு எண் அனுப்பப்பட்டது.",
+      "Unknown attribute ID(s): " + unknown.join(", "),
+      "Send only the IDs from the Attributes tab (A01…A12)."
+    );
+  }
+
+  const ticked = new Set(cleaned);
+  const markCells = known.map((attribute) => (ticked.has(attribute.id.toUpperCase()) ? "Y" : ""));
+  const stamp = istNow();
+
+  const marksRows = await readRange(`${SHEET.discovery}!A:O`);
+  const existing = parseDiscoveryMarks(marksRows, ref.attributes).get(session.sessionId.toUpperCase()) || null;
+
+  if (existing) {
+    // B..O = the 12 ticks + Marked By + Marked At (A stays the session ID).
+    await batchUpdateValues([
+      {
+        range: `${SHEET.discovery}!B${existing.rowNumber}:O${existing.rowNumber}`,
+        values: [[...markCells, session.customerName, stamp.stamp]],
+      },
+    ]);
+  } else {
+    await appendRows(`${SHEET.discovery}!A:O`, [
+      [session.sessionId, ...markCells, session.customerName, stamp.stamp],
+    ]);
+  }
+
+  return json({
+    ok: true,
+    sessionId: session.sessionId,
+    ticks: known.filter((attribute, index) => markCells[index] === "Y").map((attribute) => attribute.id),
+    count: markCells.filter(Boolean).length,
+    markedBy: session.customerName,
+    markedAt: stamp.stamp,
+    locked: false,
+  });
+}
+
 function maskSheetId(id) {
   const value = txt(id);
   if (value.length <= 8) return "••••";
@@ -1100,15 +1320,17 @@ const routes = [
   { method: "GET", pattern: /^\/api\/employees$/, handler: handleEmployees },
   { method: "GET", pattern: /^\/api\/state$/, handler: handleState },
   { method: "POST", pattern: /^\/api\/shuffle$/, handler: handleShuffle },
+  { method: "GET", pattern: /^\/api\/session\/([^/]+)\/card$/, handler: handleCard },
+  { method: "POST", pattern: /^\/api\/session\/([^/]+)\/discovery$/, handler: handleDiscovery },
 ];
 
 async function routeApi(request, url) {
   // Same-origin only: no CORS headers are ever added, so other websites cannot
   // read any of this from a browser.
   for (const route of routes) {
-    if (route.method === request.method && route.pattern.test(url.pathname)) {
-      return route.handler(request, url);
-    }
+    if (route.method !== request.method) continue;
+    const match = url.pathname.match(route.pattern);
+    if (match) return route.handler(request, url, match);
   }
   throw new ApiError(
     404,
