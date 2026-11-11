@@ -1190,8 +1190,10 @@ function mgrView() {
   const rows = state.mgrList ? state.mgrList.rows.filter((s) => s.rotation === r.number) : null;
   const list = rows === null ? `<div class="skeleton" style="margin-top:14px"></div>` : (rows.map((s) => `
     <div class="row-card" style="display:block">
-      <b>${esc(s.salespersonName)}</b> → ${esc(s.customerName)}
-      <div class="muted">${esc(s.sessionId)} · ${phaseLabel(s.phase)}${s.phase === "complete" ? " · <b>" + fmt(s.finalScore) + "/100</b>" : ""}</div>
+      <div style="display:flex;align-items:center;gap:10px"><div class="grow"><b>${esc(s.salespersonName)}</b> → ${esc(s.customerName)}
+      <div class="muted">${esc(s.sessionId)} · ${phaseLabel(s.phase)}${s.phase === "waiting_manager" ? " · " + s.conceptsRated + "/" + s.applicableConcepts + " rated" : ""}</div>
+      ${s.phase === "complete" ? `<div class="muted">Discovery ${fmt(s.discoveryScore)}/30 · Concepts ${fmt(s.conceptScore)}/70</div>` : ""}</div>
+      ${s.phase === "complete" ? `<span class="score">${fmt(s.finalScore)}<small style="font-size:12px;color:var(--ink-soft)">/100</small></span>` : ""}</div>
       ${s.phase === "cancelled" ? "" : `<div class="acts">
         <button class="btn btn-gold mini" data-action="m-rate" data-id="${esc(s.sessionId)}" ${s.phase === "waiting_ticks" ? "disabled" : ""}>${s.phase === "complete" ? "பார் · View" : "மதிப்பிடு · Rate"}</button>
         ${s.phase === "complete" ? "" : `<button class="btn btn-ghost mini" data-action="m-cancel" data-id="${esc(s.sessionId)}">ரத்து · Cancel</button>`}
@@ -1268,6 +1270,8 @@ async function saveRatings() {
       } catch (e) {}
     }
     toast(msg);
+    state.saving = false;
+    return void openMgr();   // saved: go straight back to the session list
   } catch (e) { toast(e.ta + " · " + e.en); }
   state.saving = false; render();
 }
