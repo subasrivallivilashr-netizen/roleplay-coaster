@@ -112,6 +112,68 @@ function bytesToBase64Url(bytes) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/* ---------- randomness (crypto, never Math.random) ---------- */
+
+/**
+ * A random whole number from 0 to maxExclusive-1.
+ * Rejection sampling so every value is equally likely (no modulo bias).
+ */
+function cryptoRandomInt(maxExclusive) {
+  if (maxExclusive <= 1) return 0;
+  const range = 0x100000000; // 2^32
+  const limit = Math.floor(range / maxExclusive) * maxExclusive;
+  const buffer = new Uint32Array(1);
+  let value;
+  do {
+    crypto.getRandomValues(buffer);
+    value = buffer[0];
+  } while (value >= limit);
+  return value % maxExclusive;
+}
+
+/** Pick one item from a non-empty list, fairly. */
+function pickOne(list) {
+  return list[cryptoRandomInt(list.length)];
+}
+
+/* ---------- dates in India Standard Time ---------- */
+
+/**
+ * Today's date and time in Asia/Kolkata, as text: "2026-11-12" and "09:30".
+ * The sheet expects dates written as text (YYYY-MM-DD), so we never send a
+ * JavaScript Date object to Google.
+ */
+function istNow() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+
+  const get = (type) => {
+    const found = parts.find((p) => p.type === type);
+    return found ? found.value : "";
+  };
+
+  const date = get("year") + "-" + get("month") + "-" + get("day");
+  const time = get("hour") + ":" + get("minute");
+  return { date, time, stamp: date + " " + time };
+}
+
+/** Read a JSON body without exploding when it is empty. */
+async function readJsonBody(request) {
+  try {
+    const text = await request.text();
+    return text ? JSON.parse(text) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 /* ==========================================================================
    1. CONFIGURATION
    ========================================================================== */
@@ -676,6 +738,52 @@ function findInProgressSession(sessions, rotationNumber) {
 }
 
 /* ==========================================================================
+   6b. SHUFFLE ENGINE (picking the pair and the card)
+   ========================================================================== */
+
+function nextSessionNumber(sessions) {
+  let highest = 0;
+  for (const session of sessions) {
+    const match = /^S(\d+)$/i.exec(session.sessionId);
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return highest + 1;
+}
+
+/**
+ * Deal a card from a shuffled deck.
+ *
+ * "All cards must be used once before any card repeats."
+ * If 10 cards exist, the deck cycle is 10 long. After 3 sessions, 3 cards are
+ * gone from the current cycle, so we pick from the other 7. Because every card
+ * appears exactly once per cycle, "the cards already used" are simply the card
+ * IDs of the last (totalSessions % 10) sessions.
+ */
+function dealCard(cards, sessions) {
+  if (!cards.length) {
+    throw new ApiError(
+      409,
+      "NO_CARDS",
+      "வாடிக்கையாளர் கார்டுகள் இல்லை.",
+      "The Customer_Cards tab has no cards. Add at least one card."
+    );
+  }
+
+  const deckSize = cards.length;
+  const usedCount = sessions.length % deckSize;
+  const recent = sessions.slice(Math.max(0, sessions.length - usedCount));
+
+  const usedIds = new Set(
+    recent.map((s) => txt(s.cardId).toUpperCase()).filter(Boolean)
+  );
+
+  let pool = cards.filter((card) => !usedIds.has(card.id.toUpperCase()));
+  if (!pool.length) pool = cards; // safety net if the sheet was edited by hand
+
+  return pickOne(pool);
+}
+
+/* ==========================================================================
    7. API ROUTES
    ========================================================================== */
 
@@ -766,6 +874,9 @@ async function handleState() {
     },
     rotations: rotations.map((r) => ({ number: r.number, status: r.status })),
     session: inProgress ? publicSession(inProgress) : null,
+    staff: activeEmployees.map((e) => ({ id: e.id, name: e.name })),
+    canShuffle: !inProgress && remaining.length > 0 && activeEmployees.length >= 2,
+    rotationComplete: remaining.length === 0,
     prizes: ref.settings.prizes,
     settings: {
       discoveryWeight: ref.settings.discoveryWeight,
@@ -794,6 +905,186 @@ function publicSession(session) {
   };
 }
 
+/**
+ * POST /api/shuffle
+ * Picks the pair, deals a card, writes ONE Schedule row and all
+ * Concept_Ratings rows for that session in a single batch.
+ */
+async function handleShuffle() {
+  assertConfig();
+
+  const [ref, rotationRows, scheduleRows] = await Promise.all([
+    getReferenceData(),
+    readRange(`${SHEET.rotations}!A:K`),
+    readRange(`${SHEET.schedule}!A:J`),
+  ]);
+
+  const rotations = parseRotations(rotationRows);
+  const activeRotations = rotations.filter((r) => r.status.toLowerCase() === "active");
+
+  if (activeRotations.length === 0) {
+    throw new ApiError(
+      409,
+      "NO_ACTIVE_ROTATION",
+      "செயலில் உள்ள சுற்று இல்லை. மேலாளரிடம் கேளுங்கள்.",
+      "No row in the Rotations tab has Status = Active.",
+      "Set exactly one rotation row to Active (and the others to Closed or Planned)."
+    );
+  }
+  if (activeRotations.length > 1) {
+    throw new ApiError(
+      409,
+      "MULTIPLE_ACTIVE_ROTATIONS",
+      "ஒன்றுக்கு மேற்பட்ட சுற்றுகள் செயலில் உள்ளன.",
+      "More than one rotation row has Status = Active.",
+      "Only one rotation may be Active at a time."
+    );
+  }
+  const active = activeRotations[0];
+
+  const sessions = await getSessions(scheduleRows);
+
+  const activeEmployees = ref.employees.filter((e) => e.active);
+  if (activeEmployees.length < 2) {
+    throw new ApiError(
+      409,
+      "NOT_ENOUGH_STAFF",
+      "குறைந்தது இரண்டு பேர் வேண்டும் (விற்பனையாளர் + வாடிக்கையாளர்).",
+      "At least two active employees are needed — one salesperson and one customer.",
+      "Mark more people Active = Y in the Employees tab."
+    );
+  }
+
+  // ---- Rule 1: never create a second session while one is still running ----
+  const existing = findInProgressSession(sessions, active.number);
+  if (existing) {
+    return json({ session: publicSession(existing), reused: true });
+  }
+
+  // ---- Rule 3: salesperson = active employee who has not performed yet ----
+  const performed = new Set(
+    sessions.filter((s) => s.rotation === active.number).map((s) => s.salespersonId)
+  );
+  const eligible = activeEmployees.filter((e) => !performed.has(e.id));
+
+  if (!eligible.length) {
+    throw new ApiError(
+      409,
+      "ROTATION_COMPLETE",
+      "இந்த சுற்றில் அனைவரும் முடித்துவிட்டார்கள். மேலாளர் சுற்றை மூட வேண்டும்.",
+      "Everyone has performed in this rotation. Ask the manager to close the rotation.",
+      "Manager → Rotation close."
+    );
+  }
+
+  // ---- Rules 4 + 5: customer and card ----
+  const salesperson = pickOne(eligible);
+  const customer = pickOne(activeEmployees.filter((e) => e.id !== salesperson.id));
+  const card = dealCard(ref.cards, sessions);
+
+  // ---- Concurrency guard: re-read right before writing ----
+  // If somebody else tapped Shuffle a moment ago, their session is already
+  // there. Hand that one back instead of creating a duplicate.
+  const freshRows = await readRange(`${SHEET.schedule}!A:J`);
+  const freshSessions = parseSchedule(freshRows);
+  const knownIds = new Set(
+    sessions.filter((s) => s.rotation === active.number).map((s) => s.sessionId)
+  );
+  const raced = freshSessions.filter(
+    (s) => s.rotation === active.number && !knownIds.has(s.sessionId)
+  );
+  if (raced.length > 0) {
+    const latest = raced[raced.length - 1];
+    return json({
+      session: publicSession({
+        ...latest,
+        scoreStatus: "Waiting: customer ticks",
+        complete: false,
+      }),
+      reused: true,
+    });
+  }
+
+  // ---- Rule 6: one Schedule row ----
+  const stamp = istNow();
+  const sessionId = "S" + String(nextSessionNumber(freshSessions)).padStart(3, "0");
+
+  await appendRows(`${SHEET.schedule}!A:J`, [
+    [
+      sessionId,             // A Session ID
+      stamp.date,            // B Date (text, IST)
+      active.number,         // C Rotation
+      salesperson.id,        // D Salesperson ID
+      salesperson.name,      // E Salesperson Name
+      customer.id,           // F Customer ID
+      customer.name,         // G Customer Name
+      card.id,               // H Card ID
+      "Scheduled",           // I Status
+      stamp.stamp,           // J Created At
+    ],
+  ]);
+
+  // ---- Rule 7: all Concept_Ratings rows in ONE call ----
+  const applicable = ref.concepts.map((concept) => conceptAppliesToCard(concept, card.id));
+
+  const ratingRows = ref.concepts.map((concept, index) => [
+    sessionId,                              // A Session ID
+    concept.id,                             // B Concept ID
+    concept.moduleNo,                       // C Module No
+    applicable[index] ? "Y" : "N",          // D Applicable
+    applicable[index] ? "" : "NA",          // E Rating (blank until rated)
+    "",                                     // F Manager Note
+    "",                                     // G Rated At
+  ]);
+
+  if (ratingRows.length) {
+    try {
+      await appendRows(`${SHEET.ratings}!A:G`, ratingRows);
+    } catch (firstError) {
+      // One retry: if this really fails the session has no rating rows, so tell
+      // the manager to cancel it rather than leave a stuck session.
+      try {
+        await appendRows(`${SHEET.ratings}!A:G`, ratingRows);
+      } catch (secondError) {
+        console.error("Concept_Ratings append failed twice:", secondError);
+        throw new ApiError(
+          502,
+          "RATINGS_WRITE_FAILED",
+          "கருத்து வரிசைகள் சேமிக்க முடியவில்லை. மேலாளர் இந்த அமர்வை ரத்து செய்யுங்கள்.",
+          "The session " + sessionId + " was created but its concept rows could not be written.",
+          "Ask the manager to cancel session " + sessionId + ", then shuffle again."
+        );
+      }
+    }
+  }
+
+  return json({
+    session: {
+      sessionId,
+      date: stamp.date,
+      rotation: active.number,
+      salespersonId: salesperson.id,
+      salespersonName: salesperson.name,
+      customerId: customer.id,
+      customerName: customer.name,
+      cardId: card.id,
+      status: "Scheduled",
+      scoreStatus: "Waiting: customer ticks",
+      complete: false,
+    },
+    reused: false,
+    concepts: {
+      rows: ratingRows.length,
+      applicable: applicable.filter(Boolean).length,
+    },
+    deck: {
+      deckSize: ref.cards.length,
+      cycle: Math.floor(sessions.length / ref.cards.length) + 1,
+      position: (sessions.length % ref.cards.length) + 1,
+    },
+  });
+}
+
 function maskSheetId(id) {
   const value = txt(id);
   if (value.length <= 8) return "••••";
@@ -808,6 +1099,7 @@ const routes = [
   { method: "GET", pattern: /^\/api\/health$/, handler: handleHealth },
   { method: "GET", pattern: /^\/api\/employees$/, handler: handleEmployees },
   { method: "GET", pattern: /^\/api\/state$/, handler: handleState },
+  { method: "POST", pattern: /^\/api\/shuffle$/, handler: handleShuffle },
 ];
 
 async function routeApi(request, url) {
