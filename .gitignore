@@ -1,0 +1,16 @@
+# secrets — never commit these
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# Cloudflare / Node leftovers
+.wrangler/
+node_modules/
+package-lock.json
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini

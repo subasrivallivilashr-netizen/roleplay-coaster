@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // The name of your Worker on Cloudflare. Change it if you like.
+  "name": "roleplay-coaster",
+  "main": "src/worker.js",
+
+  // A date that tells Cloudflare which runtime rules to use.
+  "compatibility_date": "2025-06-01",
+
+  // Workers Static Assets: everything inside /public is served as a normal website.
+  // /api/* is sent to the Worker first (so the API always works).
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Lets you see logs in the Cloudflare dashboard.
+  "observability": {
+    "enabled": true
+  }
+}
