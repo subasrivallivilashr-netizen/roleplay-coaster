@@ -131,9 +131,9 @@ const SHEET = {
 };
 
 const REQUIRED_SECRETS = [
-  "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+  "sheet-gateway@roleplay-coaster.iam.gserviceaccount.com",
   "GOOGLE_PRIVATE_KEY",
-  "SHEET_ID",
+  "1HT86oC4_8oDLmyOLY8TuA-pTDN5ts9_Uvxng3git_7w",
 ];
 
 /** Fail early with a clear message if a secret is missing. */
