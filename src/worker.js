@@ -137,18 +137,18 @@ let staticCache = { t: 0, v: null };
 async function loadStatic(env) {
   if (staticCache.v && Date.now() - staticCache.t < STATIC_TTL) return staticCache.v;
   const [set, emp, att, cards, con, dm] = await batchGet(env, [
-    "Settings!A2:C12", "Employees!A2:D200", "Attributes!A2:D50",
-    "Customer_Cards!A1:Q200", "Concepts!A2:H300", "Discovery_Marks!A1:O1",
+    "Settings!A2:C14", "Employees!A2:D200", "Attributes!A2:F50",
+    "Customer_Cards!A1:Q200", "Concepts!A2:H300", "Discovery_Marks!A1:Q1",
   ]);
   const sv = (i) => str(set[i]?.[1]);
   const settings = {
-    discoveryWeight: num(sv(0)) || 30, conceptWeight: num(sv(1)) || 70, maxRating: num(sv(2)) || 5,
+    discoveryWeight: num(sv(0)) || 15, conceptWeight: num(sv(1)) || 75, orderWeight: num(sv(11)) || 10, maxRating: num(sv(2)) || 5,
     prizes: [sv(6), sv(7), sv(8)],
   };
   const employees = emp.filter((r) => str(r[0]).trim()).map((r) => ({
     id: str(r[0]).trim(), name: str(r[1]).trim(), floor: str(r[2]), active: str(r[3]).trim().toUpperCase() === "Y",
   }));
-  const attributes = att.filter((r) => str(r[0]).trim()).map((r) => ({ id: str(r[0]).trim(), ta: str(r[1]), en: str(r[2]), q: str(r[3]) }));
+  const attributes = att.filter((r) => str(r[0]).trim()).map((r) => ({ id: str(r[0]).trim(), ta: str(r[1]), en: str(r[2]), q: str(r[3]), ordered: str(r[5]).trim().toUpperCase() !== "N" }));
   // cards: find columns by header text, with positional fallback
   const head = (cards[0] || []).map(str);
   const hIdx = (re, fb) => { const i = head.findIndex((h) => re.test(h.trim())); return i >= 0 ? i : fb; };
@@ -171,8 +171,12 @@ async function loadStatic(env) {
   });
   // Discovery_Marks header gives the attribute column order (B..M)
   const dmHead = (dm[0] || []).map(str);
-  const dmAttrIds = dmHead.slice(1, dmHead.length - 2);
-  const v = { settings, employees, attributes, cards: cardMap, cardList, concepts, dmAttrIds, dmWidth: Math.max(dmHead.length, 15) };
+  const attIdSet = new Set(attributes.map((a) => a.id));
+  const dmAttrIds = dmHead.slice(1).map((h) => h.trim()).filter((h) => attIdSet.has(h));
+  // intended asking order = Attributes tab order, only attributes with "Order scored" = Y
+  const orderIds = attributes.filter((a) => a.ordered).map((a) => a.id);
+  // row layout: A id | B.. attribute Y/N | Marked By | Marked At | P Ask Order | Q Order Correct
+  const v = { settings, employees, attributes, cards: cardMap, cardList, concepts, dmAttrIds, orderIds, dmWidth: Math.max(dmHead.length, 17) };
   staticCache = { t: Date.now(), v };
   return v;
 }
@@ -183,7 +187,7 @@ let dynCache = { t: 0, v: null };
 const invalidate = () => { dynCache = { t: 0, v: null }; };
 async function loadDyn(env, fresh = false) {
   if (!fresh && dynCache.v && Date.now() - dynCache.t < DYN_TTL) return dynCache.v;
-  const [sch, sc, rot] = await batchGet(env, ["Schedule!A2:J", "Scores!A2:O501", "Rotations!A2:K21"]);
+  const [sch, sc, rot] = await batchGet(env, ["Schedule!A2:J", "Scores!A2:Q501", "Rotations!A2:K21"]);
   const schedule = sch.map((r, i) => ({
     row: i + 2, id: str(r[0]), date: str(r[1]), rotation: num(r[2]), salesId: str(r[3]), sales: str(r[4]),
     custId: str(r[5]), customer: str(r[6]), cardId: str(r[7]), createdAt: str(r[9]),
@@ -193,7 +197,7 @@ async function loadDyn(env, fresh = false) {
     if (!str(r[0])) continue;
     scores.set(str(r[0]), {
       id: str(r[0]), rotation: num(r[1]), date: str(r[2]), salesId: str(r[3]), sales: str(r[4]), customer: str(r[5]),
-      found: num(r[7]), discovery: num(r[8]), applicable: num(r[9]), rated: num(r[10]), concept: num(r[12]), final: num(r[13]), status: str(r[14]),
+      found: num(r[7]), discovery: num(r[8]), applicable: num(r[9]), rated: num(r[10]), concept: num(r[12]), final: num(r[13]), status: str(r[14]), orderOk: num(r[15]), order: num(r[16]),
     });
   }
   const rotations = rot.map((r, i) => ({
@@ -248,7 +252,7 @@ function sessionView(D, s) {
     id: s.id, rotation: s.rotation, date: s.date,
     salesperson: { id: s.salesId, name: s.sales }, customer: { id: s.custId, name: s.customer },
     status: statusOf(D, s.id), found: sc?.found ?? 0,
-    discovery: sc?.discovery ?? 0, concept: sc?.concept ?? 0, final: sc?.final ?? 0,
+    discovery: sc?.discovery ?? 0, order: sc?.order ?? 0, orderCorrect: sc?.orderOk ?? 0, concept: sc?.concept ?? 0, final: sc?.final ?? 0,
   };
 }
 const findSession = (D, id) => D.schedule.find((s) => s.id === id) || fail(404, ...E.notFound);
@@ -273,7 +277,7 @@ function buildLeaderboard(S, D, rotNo) {
   const list = [...D.scores.values()].filter((s) => s.rotation === rotNo && s.status === "Complete");
   list.sort((a, b) => b.final - a.final || b.concept - a.concept || (order.get(a.salesId) ?? 999) - (order.get(b.salesId) ?? 999));
   return list.map((s, i) => ({
-    rank: i + 1, id: s.salesId, name: s.sales, final: s.final, concept: s.concept, discovery: s.discovery, sessionId: s.id,
+    rank: i + 1, id: s.salesId, name: s.sales, final: s.final, concept: s.concept, discovery: s.discovery, order: s.order, sessionId: s.id,
     prize: S.settings.prizes[i] || "",
     tie: list.filter((o) => o.final === s.final && o.concept === s.concept).length > 1,
   }));
@@ -300,7 +304,7 @@ async function removeSession(env, id, scheduleRow) {
   // scheduleRow lets a rollback remove exactly one Schedule row even if an ID was duplicated
   await compact(env, "Schedule", 10, (r, i) => (scheduleRow ? i + 2 === scheduleRow : str(r[0]) === id));
   if (!scheduleRow) {
-    await compact(env, "Discovery_Marks", 15, (r) => str(r[0]) === id);
+    await compact(env, "Discovery_Marks", 17, (r) => str(r[0]) === id);
   }
   await compact(env, "Concept_Ratings", 7, (r) => str(r[0]) === id);
   invalidate();
@@ -345,19 +349,44 @@ async function doShuffle(env) {
   return { sessionId: id, rotation: rot.no, salesperson: { id: sp.id, name: sp.name }, customer: { id: cust.id, name: cust.name } };
 }
 
+// ---------- order of asking ----------
+// Longest chain of order-scored attributes that were asked in the intended relative order.
+// A skipped or out-of-place question only loses its OWN share; it does not shift everything after it.
+function orderChain(S, asked) {
+  const rank = new Map(S.orderIds.map((id, i) => [id, i]));
+  const seq = asked.filter((id) => rank.has(id));
+  const len = seq.map(() => 1), prev = seq.map(() => -1);
+  let end = -1;
+  seq.forEach((id, i) => {
+    for (let j = 0; j < i; j++) if (rank.get(seq[j]) < rank.get(id) && len[j] + 1 > len[i]) { len[i] = len[j] + 1; prev[i] = j; }
+    if (end < 0 || len[i] > len[end]) end = i;
+  });
+  const chain = [];
+  for (let i = end; i >= 0; i = prev[i]) chain.unshift(seq[i]);
+  return chain;
+}
+// attributes the customer ticked, in the order they were ticked (from Discovery_Marks column P)
+function askedOf(S, mine) {
+  if (!mine) return [];
+  const n = S.dmAttrIds.length;
+  const flagged = S.dmAttrIds.filter((a, i) => str(mine[1 + i]).toUpperCase() === "Y");
+  const saved = str(mine[3 + n]).split(",").map((x) => x.trim()).filter((a) => flagged.includes(a));
+  return [...new Set([...saved, ...flagged])];
+}
+
 // ---------- customer ticks ----------
 async function customerView(env, id) {
   const S = await loadStatic(env); const D = await loadDyn(env, true);
   const s = findSession(D, id);
   const card = S.cards[s.cardId] || fail(500, ...E.input);
-  const [dm] = await batchGet(env, ["Discovery_Marks!A2:O"]);
+  const [dm] = await batchGet(env, ["Discovery_Marks!A2:Q"]);
   const mine = dm.find((r) => str(r[0]) === id);
-  const ticks = mine ? S.dmAttrIds.filter((a, i) => str(mine[1 + i]).toUpperCase() === "Y") : [];
+  const ticks = askedOf(S, mine);
   const view = sessionView(D, s);
   return {
     session: view, locked: view.status === "Complete", submitted: !!mine, ticks,
     persona: card.persona,
-    attributes: S.attributes.map((a) => ({ id: a.id, ta: a.ta, en: a.en, value: card.values[a.id] })),
+    attributes: S.attributes.map((a) => ({ id: a.id, ta: a.ta, en: a.en, value: card.values[a.id], ordered: a.ordered })),
     objection: { type: card.objType, says: card.objSay, tip: card.tip },
   };
 }
@@ -367,17 +396,19 @@ async function saveTicks(env, body) {
   const S = await loadStatic(env); const D = await loadDyn(env, true);
   const s = findSession(D, id);
   if (statusOf(D, id) === "Complete") bad("locked");
-  const valid = new Set(S.dmAttrIds); const chosen = new Set();
-  for (const t of body.ticks) { if (!valid.has(t)) bad("input"); chosen.add(t); }
+  // ticks arrive in the order the customer tapped them = the order the salesperson asked
+  const valid = new Set(S.dmAttrIds); const asked = [];
+  for (const t of body.ticks) { if (!valid.has(t)) bad("input"); if (!asked.includes(t)) asked.push(t); }
+  const chain = orderChain(S, asked);
   const { stamp } = istNow();
-  const row = pad([id, ...S.dmAttrIds.map((a) => (chosen.has(a) ? "Y" : "N")), s.customer, stamp], S.dmWidth);
+  const row = pad([id, ...S.dmAttrIds.map((a) => (asked.includes(a) ? "Y" : "N")), s.customer, stamp, asked.join(","), chain.length], S.dmWidth);
   const [dm] = await batchGet(env, ["Discovery_Marks!A2:A"]);
   const idx = dm.findIndex((r) => str(r[0]) === id);
   if (idx >= 0) await writeBatch(env, [{ range: `Discovery_Marks!A${idx + 2}:${colLetter(S.dmWidth)}${idx + 2}`, values: [row] }]);
   else await appendRows(env, "Discovery_Marks", [row]);
   invalidate();
   const D2 = await loadDyn(env, true);
-  return { found: chosen.size, session: sessionView(D2, findSession(D2, id)) };
+  return { found: asked.length, session: sessionView(D2, findSession(D2, id)) };
 }
 
 // ---------- manager ----------
@@ -411,8 +442,19 @@ async function managerSession(env, id) {
     modules.get(c.module).concepts.push({ id: c.id, ta: c.ta, en: c.en, rating: r.rating, note: r.note });
   }
   const card = S.cards[s.cardId];
+  const [dm] = await batchGet(env, ["Discovery_Marks!A2:Q"]);
+  const asked = askedOf(S, dm.find((r) => str(r[0]) === id));
+  const chain = new Set(orderChain(S, asked));
+  const att = new Map(S.attributes.map((a) => [a.id, a]));
+  const label = (aid) => ({ id: aid, ta: att.get(aid)?.ta || aid, en: att.get(aid)?.en || "" });
+  const order = {
+    total: S.orderIds.length, weight: S.settings.orderWeight,
+    asked: asked.map((aid) => ({ ...label(aid), scored: !!att.get(aid)?.ordered, credited: chain.has(aid) })),
+    missed: S.orderIds.filter((aid) => !asked.includes(aid)).map(label),
+    intended: S.orderIds.map(label),
+  };
   return {
-    session: sessionView(D, s), max: S.settings.maxRating, weight: S.settings.conceptWeight,
+    session: sessionView(D, s), max: S.settings.maxRating, weight: S.settings.conceptWeight, order,
     context: card ? { persona: card.persona, objection: card.objType } : null,
     modules: [...modules.values()].sort((a, b) => a.no - b.no),
   };
@@ -488,7 +530,7 @@ async function homeState(env) {
     rotation: { no: rot.no, start: rot.start }, total: prog.total, performed: prog.performed, completed: prog.completed,
     remaining: prog.remaining.map((e) => e.name), activeNames: prog.active.map((e) => e.name),
     open: open ? sessionView(D, open) : null, canClose: prog.canClose,
-    prizes: S.settings.prizes, weights: { discovery: S.settings.discoveryWeight, concept: S.settings.conceptWeight },
+    prizes: S.settings.prizes, weights: { discovery: S.settings.discoveryWeight, order: S.settings.orderWeight, concept: S.settings.conceptWeight },
     people: S.employees.map((e) => ({ id: e.id, name: e.name })),
     rotations: D.rotations.map((r) => ({ no: r.no, status: r.status })),
   };
