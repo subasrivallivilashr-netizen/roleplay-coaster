@@ -132,6 +132,15 @@ main{max-width:760px;margin:0 auto;padding:16px 16px calc(var(--nav-h) + 150px +
 .attr[aria-checked="true"]{border-color:var(--ok);background:#EDF8F2}
 .attr[aria-checked="true"] .box{background:var(--ok);border-color:var(--ok);color:#fff}
 .attr[disabled]{cursor:default}
+.attr .box{font-family:var(--display)}
+.opt{display:inline-block;margin-left:6px;padding:0 8px;border-radius:99px;background:var(--teal-50);border:1px solid var(--teal-100);color:var(--muted);font-size:12px;font-weight:400;white-space:nowrap}
+.how{background:var(--gold-100);border:1px solid var(--gold-300);border-radius:12px;padding:10px 14px;margin:0 0 12px;color:#4F3A07}
+.askline{margin:8px 0;padding-left:26px}
+.askline li{margin:4px 0}
+.askline li.ok{color:var(--ok);font-weight:500}
+.askline li.bad{color:var(--ruby)}
+.askline li.opt{color:var(--muted)}
+.askline small{font-size:12px}
 .obj{border-left:6px solid var(--gold-500)}
 .obj .say{font-size:18px;font-weight:500}
 
@@ -155,6 +164,9 @@ input[type=password],select{width:100%;min-height:52px;border:1.5px solid var(--
 .score3 div{background:var(--teal-50);border-radius:12px;padding:10px 4px}
 .score3 b{display:block;font:700 28px/1.1 var(--display);color:var(--teal-800)}
 .score3 small{font-size:12px;color:var(--muted)}
+.score3 .full{grid-column:1/-1;background:var(--teal-800)}
+.score3 .full b{color:var(--gold-300);font-size:34px}
+.score3 .full small{color:var(--gold-100)}
 
 /* ===== Leaderboard ===== */
 .podium{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:8px;align-items:end;margin:8px 0 18px}
@@ -171,7 +183,7 @@ input[type=password],select{width:100%;min-height:52px;border:1.5px solid var(--
 .pod.p1 .pz{color:var(--gold-300)}
 .pod.empty{opacity:.45}
 .tablewrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--line);background:var(--paper)}
-table{border-collapse:collapse;width:100%;min-width:420px}
+table{border-collapse:collapse;width:100%;min-width:500px}
 th,td{padding:10px 10px;text-align:left;border-bottom:1px solid var(--line);font-size:15px}
 th{background:var(--teal-800);color:var(--gold-100);font-weight:700;font-size:13px;line-height:1.3}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
@@ -476,7 +488,7 @@ Actions.shuffle = async () => {
 /* ============================================================
    CUSTOMER VIEW (honour system: the card is only fetched after the confirm tap)
    ============================================================ */
-const Cust = { id: null, ticks: new Set(), total: 0, locked: false, data: null };
+const Cust = { id: null, ticks: [], ordered: new Set(), total: 0, locked: false, data: null }; // ticks = attribute ids in tap order
 
 async function viewCustomer(id) {
   const my = State.nav; loading();
@@ -512,7 +524,7 @@ Actions.custNo = () => paintGate(Cust.session, false);
 Actions.custReveal = (btn) => busy(btn, async () => {
   try {
     const d = await api("/api/customer?id=" + encodeURIComponent(Cust.id));
-    Cust.data = d; Cust.locked = d.locked; Cust.total = d.attributes.length; Cust.ticks = new Set(d.ticks);
+    Cust.data = d; Cust.locked = d.locked; Cust.total = d.attributes.length; Cust.ticks = [...d.ticks]; Cust.ordered = new Set(d.attributes.filter((a) => a.ordered).map((a) => a.id));
     paintCard();
   } catch (e) { toastErr(e); }
 });
@@ -528,10 +540,11 @@ function paintCard() {
       <p style="margin:8px 0 0">விற்பனையாளர் கேட்கும்போது இந்த விவரங்களின்படி இயல்பாகப் பதில் சொல்லுங்கள்.<span class="en" style="display:block;margin:0">Answer naturally using these details when asked.</span></p>
     </section>
     <h2 style="margin:0 0 10px">விற்பனையாளர் கண்டறிந்ததை டிக் செய்யுங்கள் <span class="en">Tick what the salesperson discovered</span></h2>
+    <div class="how"><b>கேட்கும் வரிசையிலேயே, உடனுக்குடன் டிக் செய்யுங்கள்.</b><span class="en" style="display:block;margin:0;color:inherit">Tick each one right when the salesperson asks it. The numbers show the order asked.</span></div>
     ${d.attributes.map((a) => html`
-      <button class="attr" role="checkbox" data-act="tick" data-id="${a.id}" aria-checked="${String(Cust.ticks.has(a.id))}" ${Cust.locked ? "disabled" : ""}>
-        <span class="tx"><span class="lb">${a.ta}<span class="en">${a.en}</span></span><span class="vl">${a.value}</span></span>
-        <span class="box" aria-hidden="true">✓</span>
+      <button class="attr" role="checkbox" data-act="tick" data-id="${a.id}" aria-checked="${String(Cust.ticks.includes(a.id))}" ${Cust.locked ? "disabled" : ""}>
+        <span class="tx"><span class="lb">${a.ta}<span class="en">${a.en}</span>${a.ordered ? "" : html`<span class="opt">விருப்பம் · Optional</span>`}</span><span class="vl">${a.value}</span></span>
+        <span class="box" aria-hidden="true">${seqNo(a.id)}</span>
       </button>`)}
     <section class="card obj">
       <h2>உங்கள் ஆட்சேபனை <span class="en">Your objection</span></h2>
@@ -540,19 +553,28 @@ function paintCard() {
       <p><b>நடத்தை குறிப்பு<span class="en">Behaviour tip</span></b><br>${d.objection.tip}</p>
     </section>
     <div class="sticky"><div class="in">
-      <div class="sum"><span>கண்டறிந்தது<span class="en">Found</span></span><b id="found">${Cust.ticks.size} / ${Cust.total}</b></div>
+      <div class="sum"><span>கண்டறிந்தது<span class="en">Found</span></span><b id="found">${Cust.ticks.length} / ${Cust.total}</b></div>
       <div class="row">
         <button class="btn" data-act="custHide">அட்டையை மறை <span class="en">Hide card</span></button>
         <button class="btn btn-gold" data-act="saveTicks" ${Cust.locked ? "disabled" : ""}>சமர்ப்பி <span class="en">Submit</span></button>
       </div>
     </div></div>`);
 }
+// badge text: the asking sequence number for order-scored attributes, a tick for optional ones
+function seqNo(id) {
+  if (!Cust.ordered.has(id)) return "✓";
+  const i = Cust.ticks.filter((t) => Cust.ordered.has(t)).indexOf(id);
+  return i < 0 ? "✓" : String(i + 1);
+}
 Actions.tick = (btn) => {
   if (Cust.locked) return;
-  const id = btn.dataset.id;
-  Cust.ticks.has(id) ? Cust.ticks.delete(id) : Cust.ticks.add(id);
-  btn.setAttribute("aria-checked", Cust.ticks.has(id));
-  $("#found").textContent = `${Cust.ticks.size} / ${Cust.total}`;
+  const id = btn.dataset.id, i = Cust.ticks.indexOf(id);
+  if (i >= 0) Cust.ticks.splice(i, 1); else Cust.ticks.push(id); // untick renumbers the rest
+  $$(".attr").forEach((b) => {
+    b.setAttribute("aria-checked", String(Cust.ticks.includes(b.dataset.id)));
+    $(".box", b).textContent = seqNo(b.dataset.id);
+  });
+  $("#found").textContent = `${Cust.ticks.length} / ${Cust.total}`;
 };
 Actions.saveTicks = (btn) => busy(btn, async () => {
   try {
@@ -591,8 +613,8 @@ async function viewLeaderboard(rot) {
     <div style="height:12px"></div>
     ${d.rows.length ? html`${podium(d.rows)}
     <div class="tablewrap"><table>
-      <thead><tr><th class="n">இடம்<br><span class="en" style="margin:0">Rank</span></th><th>பெயர்<br><span class="en" style="margin:0">Name</span></th><th class="n">இறுதி<br><span class="en" style="margin:0">Final</span></th><th class="n">கருத்துகள்<br><span class="en" style="margin:0">Concept</span></th><th class="n">கண்டறிதல்<br><span class="en" style="margin:0">Discovery</span></th></tr></thead>
-      <tbody>${d.rows.map((r) => html`<tr class="${r.rank <= 3 ? "top3" : ""}"><td class="n">${r.rank}</td><td>${r.name} ${r.tie ? html`<span class="badge tie">TIE</span>` : ""}</td><td class="n"><b>${fmt(r.final)}</b></td><td class="n">${fmt(r.concept)}</td><td class="n">${fmt(r.discovery)}</td></tr>`)}</tbody>
+      <thead><tr><th class="n">இடம்<br><span class="en" style="margin:0">Rank</span></th><th>பெயர்<br><span class="en" style="margin:0">Name</span></th><th class="n">இறுதி<br><span class="en" style="margin:0">Final</span></th><th class="n">கருத்துகள்<br><span class="en" style="margin:0">Concept</span></th><th class="n">கண்டறிதல்<br><span class="en" style="margin:0">Discovery</span></th><th class="n">வரிசை<br><span class="en" style="margin:0">Order</span></th></tr></thead>
+      <tbody>${d.rows.map((r) => html`<tr class="${r.rank <= 3 ? "top3" : ""}"><td class="n">${r.rank}</td><td>${r.name} ${r.tie ? html`<span class="badge tie">TIE</span>` : ""}</td><td class="n"><b>${fmt(r.final)}</b></td><td class="n">${fmt(r.concept)}</td><td class="n">${fmt(r.discovery)}</td><td class="n">${fmt(r.order)}</td></tr>`)}</tbody>
     </table></div>`
     : html`<div class="card center"><p>முடிந்த செஷன்கள் இன்னும் இல்லை.<span class="en" style="display:block;margin:0">No completed sessions yet.</span></p></div>`}`);
 }
@@ -630,7 +652,7 @@ async function loadHistory() {
         <div class="l1"><b>${s.id} · சுழற்சி ${s.rotation}</b><span class="muted">${s.date}</span></div>
         <p class="who">${s.salesperson.name} <span class="muted">(விற்பனை)</span> ↔ ${s.customer.name} <span class="muted">(வாடிக்கை)</span></p>
         <p style="margin:6px 0 0">${badge(s.status)}
-          ${s.status === "Complete" ? html` <b>${fmt(s.final)}</b> / 100 <span class="muted">(${fmt(s.concept)} + ${fmt(s.discovery)})</span>` : ""}</p>
+          ${s.status === "Complete" ? html` <b>${fmt(s.final)}</b> / 100 <span class="muted">(${fmt(s.concept)} + ${fmt(s.discovery)} + ${fmt(s.order)})</span>` : ""}</p>
       </article>`).map((r) => r.s).join("")
       : html`<div class="card center"><p>செஷன்கள் இல்லை.<span class="en" style="display:block;margin:0">No sessions found.</span></p></div>`.s);
   } catch (e) { if (!stale(my)) box.innerHTML = errBlock(e, false).s; }
@@ -759,6 +781,20 @@ async function viewRate(id) {
   paintRate();
 }
 
+// what the customer ticked, in order, and which ones earned order marks
+function orderCard(d, s) {
+  const o = d.order; if (!o) return "";
+  return html`<section class="card">
+    <h2>கேட்ட வரிசை <span class="en">Order asked</span> <span class="badge ${s.orderCorrect === o.total ? "done" : "wait2"}">${s.orderCorrect} / ${o.total} · ${fmt(s.order)} / ${o.weight}</span></h2>
+    ${o.asked.length ? html`<ol class="askline">${o.asked.map((a) => html`<li class="${!a.scored ? "opt" : a.credited ? "ok" : "bad"}">${a.ta}<span class="en">${a.en}</span>
+      ${!a.scored ? html`<small>(விருப்பம் · optional)</small>` : a.credited ? "" : html`<small>(வரிசை தவறு · out of order)</small>`}</li>`)}</ol>`
+      : html`<p class="muted">வாடிக்கையாளர் இன்னும் டிக் செய்யவில்லை.<span class="en" style="display:block;margin:0">The customer has not ticked yet.</span></p>`}
+    ${o.asked.length && o.missed.length ? html`<p class="muted" style="margin:0 0 6px"><b>கேட்கவில்லை · Not asked:</b> ${o.missed.map((m) => m.ta).join(", ")}</p>` : ""}
+    <details><summary>சரியான வரிசை <span class="en">Intended order</span></summary>
+      <ol class="askline">${o.intended.map((a) => html`<li>${a.ta}<span class="en">${a.en}</span></li>`)}</ol></details>
+  </section>`;
+}
+
 function paintRate() {
   const { d, max } = Rate, s = d.session;
   const vals = Array.from({ length: max }, (_, i) => i + 1);
@@ -770,9 +806,10 @@ function paintRate() {
         <div><small>விற்பனையாளர் · Salesperson</small><b>${s.salesperson.name}</b></div>
         <div><small>வாடிக்கையாளர் · Customer</small><b>${s.customer.name}</b></div>
       </div>
-      <p>${badge(s.status)} <span class="muted">கண்டறிதல் ${fmt(s.discovery)} · ${s.found} / 12</span></p>
+      <p>${badge(s.status)} <span class="muted">கண்டறிதல் ${fmt(s.discovery)} · வரிசை ${fmt(s.order)} · ${s.found} / 12</span></p>
       ${d.context ? html`<p class="muted" style="margin:0"><b>${d.context.persona}</b> · ${d.context.objection}</p>` : ""}
     </section>
+    ${orderCard(d, s)}
     ${d.modules.map((m) => html`
       <div class="mod">மாடியூல் ${m.no}: ${m.ta}<span class="en">Module ${m.no}: ${m.en}</span></div>
       ${m.concepts.map((c) => html`
@@ -845,9 +882,10 @@ function paintResult(s) {
     <section class="card center">
       <p><b>${s.salesperson.name}</b></p>
       <div class="score3">
-        <div><b>${fmt(s.final)}</b><small>இறுதி · Final / 100</small></div>
+        <div class="full"><b>${fmt(s.final)}</b><small>இறுதி · Final / 100</small></div>
         <div><b>${fmt(s.concept)}</b><small>கருத்துகள் · Concept</small></div>
         <div><b>${fmt(s.discovery)}</b><small>கண்டறிதல் · Discovery</small></div>
+        <div><b>${fmt(s.order)}</b><small>வரிசை · Order</small></div>
       </div>
       <p>${badge(s.status)}</p>
       ${complete ? "" : html`<p class="muted">வாடிக்கையாளர் டிக் செய்த பிறகு மதிப்பெண் முழுமையாகும்.<span class="en" style="display:block;margin:0">The score completes once the customer submits their ticks.</span></p>`}
