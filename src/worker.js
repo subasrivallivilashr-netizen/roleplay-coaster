@@ -187,7 +187,7 @@ let dynCache = { t: 0, v: null };
 const invalidate = () => { dynCache = { t: 0, v: null }; };
 async function loadDyn(env, fresh = false) {
   if (!fresh && dynCache.v && Date.now() - dynCache.t < DYN_TTL) return dynCache.v;
-  const [sch, sc, rot] = await batchGet(env, ["Schedule!A2:J", "Scores!A2:Q501", "Rotations!A2:K21"]);
+  const [sch, sc, rot, dmRows] = await batchGet(env, ["Schedule!A2:J", "Scores!A2:Q501", "Rotations!A2:K21", "Discovery_Marks!A2:Q"]);
   const schedule = sch.map((r, i) => ({
     row: i + 2, id: str(r[0]), date: str(r[1]), rotation: num(r[2]), salesId: str(r[3]), sales: str(r[4]),
     custId: str(r[5]), customer: str(r[6]), cardId: str(r[7]), createdAt: str(r[9]),
@@ -203,7 +203,8 @@ async function loadDyn(env, fresh = false) {
   const rotations = rot.map((r, i) => ({
     row: i + 2, no: num(r[0]), start: str(r[1]), end: str(r[2]), status: str(r[3]).trim(), winners: [str(r[7]), str(r[8]), str(r[9])],
   })).filter((r) => r.no > 0);
-  const v = { schedule, scores, rotations };
+  const marks = new Map(dmRows.filter((r) => str(r[0])).map((r) => [str(r[0]), r]));
+  const v = { schedule, scores, rotations, marks };
   dynCache = { t: Date.now(), v };
   return v;
 }
@@ -274,13 +275,59 @@ function rotationProgress(S, D, rot) {
 // leaderboard: Complete sessions only; ties -> higher Concept score; exact ties flagged TIE
 function buildLeaderboard(S, D, rotNo) {
   const order = new Map(S.employees.map((e, i) => [e.id, i]));
+  const bm = badgeMap(S, D);
   const list = [...D.scores.values()].filter((s) => s.rotation === rotNo && s.status === "Complete");
   list.sort((a, b) => b.final - a.final || b.concept - a.concept || (order.get(a.salesId) ?? 999) - (order.get(b.salesId) ?? 999));
   return list.map((s, i) => ({
-    rank: i + 1, id: s.salesId, name: s.sales, final: s.final, concept: s.concept, discovery: s.discovery, order: s.order, sessionId: s.id,
+    rank: i + 1, id: s.salesId, name: s.sales, final: s.final, concept: s.concept, discovery: s.discovery, order: s.order, sessionId: s.id, badges: bm.get(s.id) || [],
     prize: S.settings.prizes[i] || "",
     tie: list.filter((o) => o.final === s.final && o.concept === s.concept).length > 1,
   }));
+}
+
+// ---------- badges (all calculated from existing Scores / Discovery_Marks, nothing new in the sheet) ----------
+//  perfect  = every order-scored attribute asked in the intended order
+//  mind     = every attribute discovered
+//  budget   = budget asked LAST (the last order-scored attribute), in the right place
+//  comeback = higher final score than that person's previous completed rotation
+//  hattrick = completed a session in 3 rotations in a row
+function badgeMap(S, D) {
+  const out = new Map();
+  const done = [...D.scores.values()].filter((x) => x.status === "Complete");
+  const finals = new Map(); // salesId -> Map(rotation -> final)
+  for (const x of done) { if (!finals.has(x.salesId)) finals.set(x.salesId, new Map()); finals.get(x.salesId).set(x.rotation, x.final); }
+  const total = S.orderIds.length, budgetId = S.orderIds[total - 1], attrN = S.dmAttrIds.length;
+  for (const x of done) {
+    const b = [];
+    if (total && x.orderOk === total) b.push("perfect");
+    if (attrN && x.found === attrN) b.push("mind");
+    const asked = askedOf(S, D.marks.get(x.id));
+    const scoredAsked = asked.filter((a) => S.orderIds.includes(a));
+    if (budgetId && scoredAsked.at(-1) === budgetId && orderChain(S, asked).includes(budgetId)) b.push("budget");
+    const mine = finals.get(x.salesId);
+    const before = [...mine.keys()].filter((r) => r < x.rotation);
+    if (before.length && x.final > mine.get(Math.max(...before))) b.push("comeback");
+    if (mine.has(x.rotation - 1) && mine.has(x.rotation - 2)) b.push("hattrick");
+    out.set(x.id, b);
+  }
+  return out;
+}
+// Ludo board: every active employee is a token in the Yard (not yet played), on the Track (playing now) or Home (finished)
+function buildBoard(S, D, rot, prog, open) {
+  const bm = badgeMap(S, D);
+  const turns = new Map(rotationSessions(D, rot.no).map((x, i) => [x.salesId, { x, n: i + 1 }]));
+  const players = prog.active.map((e) => {
+    const t = turns.get(e.id);
+    const finished = !!t && statusOf(D, t.x.id) === "Complete";
+    return {
+      id: e.id, name: e.name, floor: e.floor,
+      zone: !t ? "yard" : finished ? "home" : "track",
+      turn: t ? t.n : 0,
+      final: finished ? (D.scores.get(t.x.id)?.final ?? 0) : null,
+      badges: finished ? bm.get(t.x.id) || [] : [],
+    };
+  });
+  return { players, guest: open ? { id: open.custId, name: open.customer } : null };
 }
 
 // ---------- shuffle ----------
@@ -454,7 +501,7 @@ async function managerSession(env, id) {
     intended: S.orderIds.map(label),
   };
   return {
-    session: sessionView(D, s), max: S.settings.maxRating, weight: S.settings.conceptWeight, order,
+    session: sessionView(D, s), max: S.settings.maxRating, weight: S.settings.conceptWeight, order, attrCount: S.dmAttrIds.length,
     context: card ? { persona: card.persona, objection: card.objType } : null,
     modules: [...modules.values()].sort((a, b) => a.no - b.no),
   };
@@ -530,6 +577,7 @@ async function homeState(env) {
     rotation: { no: rot.no, start: rot.start }, total: prog.total, performed: prog.performed, completed: prog.completed,
     remaining: prog.remaining.map((e) => e.name), activeNames: prog.active.map((e) => e.name),
     open: open ? sessionView(D, open) : null, canClose: prog.canClose,
+    board: buildBoard(S, D, rot, prog, open), orderTotal: S.orderIds.length,
     prizes: S.settings.prizes, weights: { discovery: S.settings.discoveryWeight, order: S.settings.orderWeight, concept: S.settings.conceptWeight },
     people: S.employees.map((e) => ({ id: e.id, name: e.name })),
     rotations: D.rotations.map((r) => ({ no: r.no, status: r.status })),
